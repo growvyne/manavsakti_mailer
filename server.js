@@ -36,12 +36,13 @@ const storage = multer.diskStorage({
   },
 });
 
-// Validation: Allow only PDF or DOCX
+// Allowed file types: PDF, DOCX
 const fileFilter = (req, file, cb) => {
   const allowed = [
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ];
+
   if (allowed.includes(file.mimetype)) {
     cb(null, true);
   } else {
@@ -49,6 +50,7 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
+// Multer instance
 const upload = multer({
   storage,
   fileFilter,
@@ -56,95 +58,76 @@ const upload = multer({
 });
 
 // --------------------------------------
-// SUBMIT FORM ROUTE
+// FAST SUBMIT FORM ROUTE
 // --------------------------------------
-app.post("/submit-form", upload.single("cv"), async (req, res) => {
+app.post("/submit-form", upload.single("cv"), (req, res) => {
   try {
-    const {
-      fullName,
-      gender,
-      dob,
-      email,
-      phone,
-      company,
-      designation,
-      experience,
-      ctc,
-      expectedCtc,
-      noticePeriod,
-      city,
-      degree,
-      institute,
-      department,
-      industry,
-      skills,
-    } = req.body;
+    const formData = req.body;
+    const file = req.file;
 
-    const cvFile = req.file ? req.file.path : null;
-
-    // --------------------------------------
-    // NODEMAILER TRANSPORTER
-    // --------------------------------------
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER, // Gmail
-        pass: process.env.EMAIL_PASS, // App Password
-      },
-    });
-
-    // --------------------------------------
-    // EMAIL HTML TEMPLATE
-    // --------------------------------------
-    const htmlContent = `
-      <h2>New Job Application Received</h2>
-      <p><strong>Full Name:</strong> ${fullName}</p>
-      <p><strong>Gender:</strong> ${gender}</p>
-      <p><strong>DOB:</strong> ${dob}</p>
-      <p><strong>Email:</strong> ${email}</p>
-      <p><strong>Phone:</strong> ${phone}</p>
-      <p><strong>Company:</strong> ${company}</p>
-      <p><strong>Designation:</strong> ${designation}</p>
-      <p><strong>Experience:</strong> ${experience}</p>
-      <p><strong>CTC:</strong> ${ctc}</p>
-      <p><strong>Expected CTC:</strong> ${expectedCtc}</p>
-      <p><strong>Notice Period:</strong> ${noticePeriod}</p>
-      <p><strong>City:</strong> ${city}</p>
-      <p><strong>Degree:</strong> ${degree}</p>
-      <p><strong>Institute:</strong> ${institute}</p>
-      <p><strong>Department:</strong> ${department}</p>
-      <p><strong>Industry:</strong> ${industry}</p>
-      <p><strong>Skills:</strong> ${skills}</p>
-    `;
-
-    // --------------------------------------
-    // EMAIL OPTIONS
-    // --------------------------------------
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: process.env.EMAIL_USER,
-      subject: `New Candidate: ${fullName}`,
-      html: htmlContent,
-      attachments: cvFile
-        ? [
-            {
-              filename: req.file.originalname,
-              path: cvFile,
-            },
-          ]
-        : [],
-    };
-
-    // SEND EMAIL
-    await transporter.sendMail(mailOptions);
-
+    // 1️⃣ Send quick response to frontend
     res.json({
       success: true,
-      message: "Form submitted & email sent successfully!",
+      message: "Form received! Email will be sent shortly.",
+    });
+
+    // 2️⃣ Background email processing
+    setImmediate(async () => {
+      try {
+        // Nodemailer transporter
+        const transporter = nodemailer.createTransport({
+          service: "gmail",
+          auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS,
+          },
+        });
+
+        // HTML email content (auto generate)
+        const htmlContent = `
+          <h2>New Job Application Received</h2>
+          ${Object.entries(formData)
+            .map(([key, value]) => {
+              const label = key.charAt(0).toUpperCase() + key.slice(1);
+              return `<p><strong>${label}:</strong> ${value}</p>`;
+            })
+            .join("")}
+        `;
+
+        // Email options
+        const mailOptions = {
+          from: process.env.EMAIL_USER,
+          to: process.env.EMAIL_USER,
+          subject: `New Candidate: ${formData.fullName}`,
+          html: htmlContent,
+          attachments: file
+            ? [
+                {
+                  filename: file.originalname,
+                  path: file.path,
+                },
+              ]
+            : [],
+        };
+
+        // Send email
+        await transporter.sendMail(mailOptions);
+        console.log("Email sent successfully for:", formData.fullName);
+
+        // 3️⃣ Delete uploaded file after sending
+        if (file) {
+          fs.unlink(file.path, (err) => {
+            if (err) console.log("Error deleting file:", err);
+            else console.log("CV deleted:", file.path);
+          });
+        }
+      } catch (err) {
+        console.error("Background email error:", err.message);
+      }
     });
   } catch (err) {
     console.error("Error:", err.message);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: err.message,
     });
@@ -152,6 +135,10 @@ app.post("/submit-form", upload.single("cv"), async (req, res) => {
 });
 
 // --------------------------------------
-app.listen(5000, () => {
-  console.log("Server running on port 5000");
+// PORT FOR RENDER
+// --------------------------------------
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
