@@ -3,6 +3,7 @@ import cors from "cors";
 import multer from "multer";
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
+import fs from "fs";
 
 dotenv.config();
 const app = express();
@@ -10,32 +11,25 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ROOT ROUTE
+// Multer config
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, "uploads/"),
+  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
+});
+
+const upload = multer({ storage });
+
 app.get("/", (req, res) => {
   res.send("Email API is running...");
 });
 
-// --------------------------------------
-// MULTER — MEMORY STORAGE (Render Safe)
-// --------------------------------------
-const upload = multer({
-  storage: multer.memoryStorage(), // ✔ No disk usage
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
-  fileFilter: (req, file, cb) => {
-    const allowed = [
-      "application/pdf",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ];
-    if (allowed.includes(file.mimetype)) cb(null, true);
-    else cb(new Error("Only PDF or DOCX allowed"));
-  },
-});
 
-// --------------------------------------
-// SUBMIT FORM ROUTE
-// --------------------------------------
-app.post("/submit-form", upload.single("cv"), async (req, res) => {
+app.post("/send-cv", upload.single("cv"), async (req, res) => {
   try {
+    if (!req.file) {
+      return res.status(400).json({ error: "CV file is missing!" });
+    }
+
     const {
       fullName,
       gender,
@@ -56,69 +50,72 @@ app.post("/submit-form", upload.single("cv"), async (req, res) => {
       skills,
     } = req.body;
 
-    // Nodemailer Transporter (Gmail)
+    const cvFile = req.file;
+
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
+        user: process.env.MY_EMAIL,
+        pass: process.env.MY_APP_PASSWORD,
       },
     });
 
-    // HTML TEMPLATE
-    const htmlContent = `
-      <h2>New Job Application Received</h2>
-      <p><strong>Full Name:</strong> ${fullName}</p>
-      <p><strong>Gender:</strong> ${gender}</p>
-      <p><strong>DOB:</strong> ${dob}</p>
-      <p><strong>Email:</strong> ${email}</p>
-      <p><strong>Phone:</strong> ${phone}</p>
-      <p><strong>Company:</strong> ${company}</p>
-      <p><strong>Designation:</strong> ${designation}</p>
-      <p><strong>Experience:</strong> ${experience}</p>
-      <p><strong>CTC:</strong> ${ctc}</p>
-      <p><strong>Expected CTC:</strong> ${expectedCtc}</p>
-      <p><strong>Notice Period:</strong> ${noticePeriod}</p>
-      <p><strong>City:</strong> ${city}</p>
-      <p><strong>Degree:</strong> ${degree}</p>
-      <p><strong>Institute:</strong> ${institute}</p>
-      <p><strong>Department:</strong> ${department}</p>
-      <p><strong>Industry:</strong> ${industry}</p>
-      <p><strong>Skills:</strong> ${skills}</p>
-    `;
+    await transporter.sendMail({
+      from: email,
+      to: process.env.MY_EMAIL,
+      subject: "New CV Submission",
+    html: `
+  <h2>New CV Submitted</h2>
 
-    // EMAIL OPTIONS
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: process.env.EMAIL_USER,
-      subject: `New Candidate: ${fullName}`,
-      html: htmlContent,
-      attachments: req.file
-        ? [
-            {
-              filename: req.file.originalname,
-              content: req.file.buffer, // ✔ Render-safe
-            },
-          ]
-        : [],
-    };
+  <h3>Personal Details</h3>
+  <p><strong>Name:</strong> ${fullName}</p>
+  <p><strong>Gender:</strong> ${gender}</p>
+  <p><strong>Date of Birth:</strong> ${dob}</p>
+  <p><strong>Email:</strong> ${email}</p>
+  <p><strong>Phone:</strong> ${phone}</p>
+  <p><strong>City:</strong> ${city}</p>
 
-    // SEND MAIL
-    await transporter.sendMail(mailOptions);
+  <h3>Education Details</h3>
+  <p><strong>Degree:</strong> ${degree}</p>
+  <p><strong>Institute:</strong> ${institute}</p>
+  <p><strong>Department:</strong> ${department}</p>
 
-    return res.json({
-      success: true,
-      message: "Form submitted & email sent successfully!",
+  <h3>Professional Details</h3>
+  <p><strong>Company:</strong> ${company}</p>
+  <p><strong>Designation:</strong> ${designation}</p>
+  <p><strong>Experience:</strong> ${experience}</p>
+  <p><strong>Industry:</strong> ${industry}</p>
+  <p><strong>Current CTC:</strong> ${ctc}</p>
+  <p><strong>Expected CTC:</strong> ${expectedCtc}</p>
+  <p><strong>Notice Period:</strong> ${noticePeriod}</p>
+
+  <h3>Skills</h3>
+  <p>${skills}</p>
+
+  <h3>Attachment</h3>
+  <p>CV File Attached Successfully.</p>
+`,
+
+      attachments: [
+        {
+          filename: cvFile.originalname,
+          path: cvFile.path,
+        },
+      ],
     });
+
+    fs.unlink(cvFile.path, () => {});
+
+    res.json({ message: "CV Sent Successfully!" });
+
   } catch (err) {
-    console.error("Error:", err.message);
-    res.status(500).json({
-      success: false,
-      message: err.message,
-    });
+    console.error("Email sending error:", err);
+    res.status(500).json({ error: "Email sending failed", details: err });
   }
 });
 
-// PORT FOR RENDER
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on ${PORT}`));
+
+
+app.listen(5000, () => {
+  console.log("Server running on port 5000");
+});
